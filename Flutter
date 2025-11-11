@@ -1,0 +1,206 @@
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+import 'dart:html' as html; // for web download
+import 'package:flutter/material.dart';
+
+void main() => runApp(const DoodleApp());
+
+class DoodleApp extends StatelessWidget {
+  const DoodleApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: DoodleScreen(),
+    );
+  }
+}
+
+class DoodleScreen extends StatefulWidget {
+  const DoodleScreen({super.key});
+
+  @override
+  State<DoodleScreen> createState() => _DoodleScreenState();
+}
+
+class _DoodleScreenState extends State<DoodleScreen> {
+  final GlobalKey _canvasKey = GlobalKey();
+  List<DoodleStroke> strokes = [];
+  List<DoodleStroke> redoStack = [];
+  Color selectedColor = Colors.black;
+  double strokeWidth = 4.0;
+
+  void startStroke(Offset position) {
+    setState(() {
+      redoStack.clear();
+      strokes.add(DoodleStroke([position], selectedColor, strokeWidth));
+    });
+  }
+
+  void updateStroke(Offset position) {
+    setState(() {
+      if (strokes.isNotEmpty) strokes.last.points.add(position);
+    });
+  }
+
+  void undo() {
+    if (strokes.isNotEmpty) {
+      setState(() => redoStack.add(strokes.removeLast()));
+    }
+  }
+
+  void redo() {
+    if (redoStack.isNotEmpty) {
+      setState(() => strokes.add(redoStack.removeLast()));
+    }
+  }
+
+  void clearCanvas() {
+    setState(() {
+      strokes.clear();
+      redoStack.clear();
+    });
+  }
+
+  Future<void> saveAsImage() async {
+    try {
+      RenderRepaintBoundary boundary = _canvasKey.currentContext!
+          .findRenderObject() as RenderRepaintBoundary;
+
+      ui.Image image = await boundary.toImage(pixelRatio: 3.0);
+      ByteData? byteData =
+          await image.toByteData(format: ui.ImageByteFormat.png);
+      Uint8List pngBytes = byteData!.buffer.asUint8List();
+
+      final blob = html.Blob([pngBytes]);
+      final url = html.Url.createObjectUrlFromBlob(blob);
+      final anchor = html.AnchorElement(href: url)
+        ..download = "doodle_drawing.png"
+        ..click();
+      html.Url.revokeObjectUrl(url);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('🎉 Drawing downloaded successfully!')),
+      );
+    } catch (e) {
+      debugPrint('Error saving image: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("🎨 Doodle - Magical Drawing App"),
+        backgroundColor: Colors.purple,
+        actions: [
+          IconButton(icon: const Icon(Icons.undo), onPressed: undo),
+          IconButton(icon: const Icon(Icons.redo), onPressed: redo),
+          IconButton(icon: const Icon(Icons.delete), onPressed: clearCanvas),
+          IconButton(
+            icon: const Icon(Icons.download),
+            onPressed: saveAsImage,
+          ),
+        ],
+      ),
+      body: LayoutBuilder(
+        builder: (context, constraints) => GestureDetector(
+          onPanStart: (details) => startStroke(details.localPosition),
+          onPanUpdate: (details) => updateStroke(details.localPosition),
+          child: RepaintBoundary(
+            key: _canvasKey,
+            child: CustomPaint(
+              size: Size(constraints.maxWidth, constraints.maxHeight),
+              painter: DoodlePainter(strokes),
+              child: Container(color: Colors.white),
+            ),
+          ),
+        ),
+      ),
+      bottomNavigationBar: BottomAppBar(
+        color: Colors.grey[200],
+        child: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Row(
+            children: [
+              const Text("Brush Size: "),
+              Expanded(
+                child: Slider(
+                  min: 1.0,
+                  max: 15.0,
+                  value: strokeWidth,
+                  activeColor: Colors.purple,
+                  onChanged: (value) => setState(() => strokeWidth = value),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.color_lens, color: Colors.purple),
+                onPressed: () => _pickColor(context),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _pickColor(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Pick a color"),
+        content: Wrap(
+          spacing: 8,
+          children: [
+            Colors.black,
+            Colors.red,
+            Colors.green,
+            Colors.blue,
+            Colors.orange,
+            Colors.purple,
+            Colors.pink,
+            Colors.teal,
+          ].map((color) {
+            return GestureDetector(
+              onTap: () {
+                setState(() => selectedColor = color);
+                Navigator.pop(context);
+              },
+              child: CircleAvatar(backgroundColor: color, radius: 20),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+}
+
+class DoodleStroke {
+  List<Offset> points;
+  Color color;
+  double width;
+  DoodleStroke(this.points, this.color, this.width);
+}
+
+class DoodlePainter extends CustomPainter {
+  final List<DoodleStroke> strokes;
+  DoodlePainter(this.strokes);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final stroke in strokes) {
+      final paint = Paint()
+        ..color = stroke.color
+        ..strokeWidth = stroke.width
+        ..strokeCap = StrokeCap.round
+        ..isAntiAlias = true
+        ..style = PaintingStyle.stroke;
+      for (int i = 0; i < stroke.points.length - 1; i++) {
+        canvas.drawLine(stroke.points[i], stroke.points[i + 1], paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
